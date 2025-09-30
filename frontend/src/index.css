@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+	--bg: #0b1020;
+	--panel: #121a2a;
+	--muted: #9aa3b2;
+}
+
+html, body, #root {
+	height: 100%;
+}
+
+body {
+	background: var(--bg);
+	color: white;
+}
+
+
