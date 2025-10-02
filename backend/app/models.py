@@ -1,48 +1,198 @@
 import os
 import threading
-from typing import Optional, List
-import random
+from typing import Optional, List, Iterator
+import logging
+
+try:
+    from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+    import torch
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+    logging.warning("Transformers not available, falling back to mock responses")
 
 _model_lock = threading.Lock()
+_model_cache = {}
+
+logger = logging.getLogger(__name__)
 
 
 def get_model_id() -> str:
-	return os.getenv("MODEL_ID", "mock-model")
+    return os.getenv("MODEL_ID", "meta-llama/Llama-3.1-8B-Instruct")
+
+
+def get_huggingface_token() -> Optional[str]:
+    return os.getenv("HUGGINGFACE_HUB_TOKEN")
 
 
 def get_text_generation_pipeline():
-	return MockTextGeneration()
+    """Get or create the text generation pipeline with Meta LLaMA"""
+    model_id = get_model_id()
+    
+    if not TRANSFORMERS_AVAILABLE:
+        logger.warning("Transformers not available, using mock responses")
+        return MockTextGeneration()
+    
+    with _model_lock:
+        if model_id not in _model_cache:
+            try:
+                logger.info(f"Loading model: {model_id}")
+                
+                # Get HuggingFace token if available
+                hf_token = get_huggingface_token()
+                
+                # Load tokenizer and model
+                tokenizer = AutoTokenizer.from_pretrained(
+                    model_id, 
+                    token=hf_token,
+                    trust_remote_code=True
+                )
+                
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    token=hf_token,
+                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                    device_map="auto" if torch.cuda.is_available() else None,
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=True
+                )
+                
+                # Create pipeline
+                pipe = pipeline(
+                    "text-generation",
+                    model=model,
+                    tokenizer=tokenizer,
+                    max_new_tokens=512,
+                    temperature=0.7,
+                    do_sample=True,
+                    pad_token_id=tokenizer.eos_token_id
+                )
+                
+                _model_cache[model_id] = pipe
+                logger.info(f"Successfully loaded model: {model_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to load model {model_id}: {e}")
+                logger.info("Falling back to mock responses")
+                _model_cache[model_id] = MockTextGeneration()
+        
+        return _model_cache[model_id]
 
 
 class MockTextGeneration:
-	"""Mock text generation for Windows compatibility"""
-	
-	def __call__(self, prompts):
-		if isinstance(prompts, str):
-			prompts = [prompts]
-		return [{"generated_text": self._mock_response(p)} for p in prompts]
-	
-	def _mock_response(self, prompt: str) -> str:
-		responses = [
-			"This is a mock response for testing purposes.",
-			"The system is running in demo mode without AI models.",
-			"Mock AI response: Please install proper AI models for production use.",
-			"Demo response: The request has been processed successfully.",
-		]
-		return random.choice(responses)
+    """Mock text generation for fallback when models aren't available"""
+    
+    def __call__(self, prompts, **kwargs):
+        if isinstance(prompts, str):
+            prompts = [prompts]
+        return [{"generated_text": self._mock_response(p)} for p in prompts]
+    
+    def _mock_response(self, prompt: str) -> str:
+        responses = [
+            "This is a mock response for testing purposes. Please configure HUGGINGFACE_HUB_TOKEN to use Meta LLaMA.",
+            "Demo mode: The system would normally use Meta LLaMA 3.1-8B-Instruct for this response.",
+            "Mock AI response: Configure the environment variables to enable Meta LLaMA integration.",
+            "Fallback response: The request has been processed successfully in demo mode.",
+        ]
+        import random
+        return random.choice(responses)
+
+
+def format_llama_prompt(system_prompt: str, user_prompt: str) -> str:
+    """Format prompt for Meta LLaMA 3.1 Instruct"""
+    return f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{user_prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
 
 
 def generate_batch_with_system_prompt(system_prompt: str, user_prompts: List[str]) -> List[str]:
-	pipe = get_text_generation_pipeline()
-	prompts = [f"{system_prompt}\n{u}" for u in user_prompts]
-	outputs = pipe(prompts)
-	results: List[str] = []
-	for out in outputs:
-		text = out["generated_text"] if isinstance(out, dict) else out[0]["generated_text"]
-		results.append(text.strip())
-	return results
+    pipe = get_text_generation_pipeline()
+    
+    if isinstance(pipe, MockTextGeneration):
+        # Mock responses
+        prompts = [f"{system_prompt}\n{u}" for u in user_prompts]
+        outputs = pipe(prompts)
+        results = []
+        for out in outputs:
+            text = out["generated_text"] if isinstance(out, dict) else out[0]["generated_text"]
+            results.append(text.strip())
+        return results
+    
+    # Real LLaMA model
+    results = []
+    for user_prompt in user_prompts:
+        formatted_prompt = format_llama_prompt(system_prompt, user_prompt)
+        
+        try:
+            outputs = pipe(
+                formatted_prompt,
+                max_new_tokens=512,
+                temperature=0.7,
+                do_sample=True,
+                return_full_text=False,
+                pad_token_id=pipe.tokenizer.eos_token_id
+            )
+            
+            if outputs and len(outputs) > 0:
+                generated_text = outputs[0]["generated_text"].strip()
+                # Clean up any remaining special tokens
+                generated_text = generated_text.replace("<|eot_id|>", "").strip()
+                results.append(generated_text)
+            else:
+                results.append("I apologize, but I couldn't generate a response.")
+                
+        except Exception as e:
+            logger.error(f"Error generating response: {e}")
+            results.append("I apologize, but there was an error generating the response.")
+    
+    return results
 
 
 def generate_with_system_prompt(system_prompt: str, user_prompt: str) -> str:
-	return generate_batch_with_system_prompt(system_prompt, [user_prompt])[0]
+    return generate_batch_with_system_prompt(system_prompt, [user_prompt])[0]
+
+
+def generate_chat_response(messages: List[dict], max_new_tokens: int = 512) -> str:
+    """Generate chat response using conversation history"""
+    pipe = get_text_generation_pipeline()
+    
+    if isinstance(pipe, MockTextGeneration):
+        return pipe._mock_response("Chat conversation")
+    
+    # Format conversation for LLaMA
+    conversation = "<|begin_of_text|>"
+    
+    for message in messages:
+        role = message["role"]
+        content = message["content"]
+        
+        if role == "system":
+            conversation += f"<|start_header_id|>system<|end_header_id|>\n\n{content}<|eot_id|>"
+        elif role == "user":
+            conversation += f"<|start_header_id|>user<|end_header_id|>\n\n{content}<|eot_id|>"
+        elif role == "assistant":
+            conversation += f"<|start_header_id|>assistant<|end_header_id|>\n\n{content}<|eot_id|>"
+    
+    # Add assistant turn
+    conversation += "<|start_header_id|>assistant<|end_header_id|>\n\n"
+    
+    try:
+        outputs = pipe(
+            conversation,
+            max_new_tokens=max_new_tokens,
+            temperature=0.7,
+            do_sample=True,
+            return_full_text=False,
+            pad_token_id=pipe.tokenizer.eos_token_id
+        )
+        
+        if outputs and len(outputs) > 0:
+            generated_text = outputs[0]["generated_text"].strip()
+            # Clean up any remaining special tokens
+            generated_text = generated_text.replace("<|eot_id|>", "").strip()
+            return generated_text
+        else:
+            return "I apologize, but I couldn't generate a response."
+            
+    except Exception as e:
+        logger.error(f"Error generating chat response: {e}")
+        return "I apologize, but there was an error generating the response."
 

@@ -10,6 +10,7 @@ from docx import Document
 
 from .deps import summarize_text, answer_question, generate_key_points, generate_action_tasks
 from .rag import InMemoryRAGIndex
+from .models import generate_chat_response
 
 app = FastAPI(title="GenAI Research Assistant API")
 
@@ -35,6 +36,20 @@ class QARequest(BaseModel):
     context: Optional[str] = None
     question: str
     document_id: Optional[str] = None
+
+
+class ChatMessage(BaseModel):
+    role: str  # "user" | "assistant" | "system"
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list[ChatMessage] = []
+
+
+class ChatResponse(BaseModel):
+    response: str
 
 
 @app.get("/health")
@@ -146,3 +161,44 @@ async def qa(json: Optional[QARequest] = None, question: Optional[str] = Form(No
         q = question
     answer = answer_question(doc_text, q)
     return {"answer": answer}
+
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """
+    Chat endpoint using Meta LLaMA 3.1-8B-Instruct
+    Accepts a message and conversation history, returns AI response
+    """
+    try:
+        # Convert Pydantic models to dict format for the model
+        messages = []
+        
+        # Add system message for context
+        messages.append({
+            "role": "system",
+            "content": "You are a helpful AI research assistant. You provide accurate, helpful, and concise responses. You can help with research, analysis, summarization, and answering questions."
+        })
+        
+        # Add conversation history
+        for msg in request.history:
+            messages.append({
+                "role": msg.role,
+                "content": msg.content
+            })
+        
+        # Add current user message
+        messages.append({
+            "role": "user",
+            "content": request.message
+        })
+        
+        # Generate response using Meta LLaMA
+        response = generate_chat_response(messages, max_new_tokens=512)
+        
+        return ChatResponse(response=response)
+        
+    except Exception as e:
+        # Log the error but don't expose internal details
+        import logging
+        logging.error(f"Chat endpoint error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate response")
