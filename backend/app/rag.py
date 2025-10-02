@@ -1,0 +1,44 @@
+from typing import List, Tuple, Dict, Optional
+import re
+import numpy as np
+
+
+class InMemoryRAGIndex:
+	"""Mock RAG index for Windows compatibility"""
+	
+	def __init__(self, embedding_model_name: str = "mock-embeddings") -> None:
+		self.embedding_model_name = embedding_model_name
+		self.doc_id_to_chunks: Dict[str, List[str]] = {}
+
+	@staticmethod
+	def chunk_text(text: str, max_tokens: int = 256) -> List[str]:
+		# naive token approximation by words
+		words = re.split(r"\s+", text.strip())
+		chunks: List[str] = []
+		current: List[str] = []
+		for w in words:
+			current.append(w)
+			if len(current) >= max_tokens:
+				chunks.append(" ".join(current))
+				current = []
+		if current:
+			chunks.append(" ".join(current))
+		return chunks
+
+	def build_index_for_document(self, document_id: str, text: str) -> None:
+		"""Mock indexing - just store chunks"""
+		chunks = self.chunk_text(text)
+		if not chunks:
+			chunks = [text]
+		self.doc_id_to_chunks[document_id] = chunks
+
+	def retrieve(self, document_id: str, query: str, top_k: int = 4) -> List[Tuple[str, float]]:
+		"""Mock retrieval - return first few chunks with mock scores"""
+		if document_id not in self.doc_id_to_chunks:
+			raise KeyError("document_id not indexed")
+		chunks = self.doc_id_to_chunks[document_id]
+		results: List[Tuple[str, float]] = []
+		for i, chunk in enumerate(chunks[:top_k]):
+			score = 0.9 - (i * 0.1)  # Mock decreasing relevance
+			results.append((chunk, score))
+		return results

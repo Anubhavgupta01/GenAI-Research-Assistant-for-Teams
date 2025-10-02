@@ -2,19 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-	--bg: #0b1020;
-	--panel: #121a2a;
-	--muted: #9aa3b2;
-}
-
 html, body, #root {
 	height: 100%;
+	margin: 0;
+	padding: 0;
 }
 
 body {
-	background: var(--bg);
-	color: white;
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+	html {
+		color-scheme: dark;
+	}
+}
+
+/* Animations */
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.animate-fadeIn {
+	animation: fadeIn 0.3s ease-out;
+}
+
+/* Prose styling for markdown */
+.prose code {
+	@apply bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded text-sm font-mono;
+}
+
+.prose pre {
+	@apply bg-gray-100 dark:bg-gray-700 p-3 rounded-lg overflow-x-auto;
+}
+
+.prose pre code {
+	@apply bg-transparent p-0;
+}
+
+.prose strong {
+	@apply font-semibold;
+}
+
+.prose em {
+	@apply italic;
 }
 
 

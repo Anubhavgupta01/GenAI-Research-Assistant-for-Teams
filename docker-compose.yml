@@ -1,21 +1,63 @@
-version: "3.9"
+networks:
+  mcp:
+    name: mcp
+
+volumes:
+  hf-cache:
+
 services:
-  backend:
-    build: ./backend
-    ports:
-      - "8000:8000"
-    environment:
-      - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN}
-      - MODEL_ID=${MODEL_ID:-meta-llama/Llama-3.1-8B-Instruct}
-    volumes:
-      - ./backend/app:/app/app
   frontend:
     build: ./frontend
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=http://backend:8000
     ports:
-      - "5173:5173"
+      - "3000:5173"
     depends_on:
       - backend
+    networks:
+      - mcp
+
+  backend:
+    build: ./backend
+    environment:
+      - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN}
+      - HUGGING_FACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN}
+      - MODEL_ID=${MODEL_ID:-meta-llama/Llama-3.1-8B-Instruct}
+      - TGI_BASE_URL=http://llama_service:8080
+      - DOC_PARSER_URL=http://doc_parser:8001
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/app/app
+    depends_on:
+      - llama_service
+      - doc_parser
+    networks:
+      - mcp
+
+  llama_service:
+    image: ghcr.io/huggingface/text-generation-inference:latest
+    environment:
+      - MODEL_ID=${MODEL_ID:-meta-llama/Llama-3.1-8B-Instruct}
+      - HUGGING_FACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN}
+      - NUM_SHARD=1
+    volumes:
+      - hf-cache:/data
+    shm_size: "2g"
+    networks:
+      - mcp
+
+  doc_parser:
+    build: ./extractor
+    ports:
+      - "8001:8001"
+    networks:
+      - mcp
+
+  mcp_gateway:
+    image: alpine:3.20
+    command: ["sh", "-c", "sleep infinity"]
+    networks:
+      - mcp
 
 
