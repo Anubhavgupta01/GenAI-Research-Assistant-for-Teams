@@ -25,9 +25,60 @@ def get_huggingface_token() -> Optional[str]:
     return os.getenv("HUGGINGFACE_HUB_TOKEN")
 
 
+class MockTokenizer:
+    """Mock tokenizer for compatibility with pipeline attributes"""
+    def __init__(self):
+        self.eos_token_id = 0
+
+
+class HFInferenceAPI:
+    """Uses Hugging Face Serverless Inference API for generation"""
+    def __init__(self, model_id: str, token: str):
+        self.model_id = model_id
+        self.token = token
+        from huggingface_hub import InferenceClient
+        self.client = InferenceClient(model=model_id, token=token)
+        self.tokenizer = MockTokenizer()
+        
+    def __call__(self, prompts, **kwargs):
+        if isinstance(prompts, str):
+            prompts = [prompts]
+        
+        # Clean up kwargs that are not supported by InferenceClient.text_generation
+        clean_kwargs = {}
+        for key in ["max_new_tokens", "temperature", "do_sample", "return_full_text"]:
+            if key in kwargs:
+                clean_kwargs[key] = kwargs[key]
+                
+        results = []
+        for prompt in prompts:
+            try:
+                text = self.client.text_generation(prompt, **clean_kwargs)
+                results.append({"generated_text": text})
+            except Exception as e:
+                logger.error(f"HF Inference API error: {e}")
+                results.append({"generated_text": f"Error generating response via Hugging Face Inference API: {e}"})
+        return results
+
+
 def get_text_generation_pipeline():
     """Get or create the text generation pipeline with Meta LLaMA"""
     model_id = get_model_id()
+    hf_token = get_huggingface_token()
+    
+    # Prefer Hugging Face Serverless Inference API if token is provided
+    use_api = os.getenv("USE_HF_INFERENCE_API", "true").lower() == "true"
+    if use_api and hf_token:
+        with _model_lock:
+            if model_id not in _model_cache:
+                try:
+                    logger.info(f"Using Hugging Face Serverless Inference API for model: {model_id}")
+                    _model_cache[model_id] = HFInferenceAPI(model_id, hf_token)
+                except Exception as e:
+                    logger.error(f"Failed to initialize Hugging Face Inference API: {e}")
+            
+            if model_id in _model_cache:
+                return _model_cache[model_id]
     
     if not TRANSFORMERS_AVAILABLE:
         logger.warning("Transformers not available, using mock responses")
@@ -36,10 +87,7 @@ def get_text_generation_pipeline():
     with _model_lock:
         if model_id not in _model_cache:
             try:
-                logger.info(f"Loading model: {model_id}")
-                
-                # Get HuggingFace token if available
-                hf_token = get_huggingface_token()
+                logger.info(f"Loading model locally: {model_id}")
                 
                 # Load tokenizer and model
                 tokenizer = AutoTokenizer.from_pretrained(
@@ -69,14 +117,15 @@ def get_text_generation_pipeline():
                 )
                 
                 _model_cache[model_id] = pipe
-                logger.info(f"Successfully loaded model: {model_id}")
+                logger.info(f"Successfully loaded model locally: {model_id}")
                 
             except Exception as e:
-                logger.error(f"Failed to load model {model_id}: {e}")
+                logger.error(f"Failed to load model locally {model_id}: {e}")
                 logger.info("Falling back to mock responses")
                 _model_cache[model_id] = MockTextGeneration()
         
         return _model_cache[model_id]
+
 
 
 class MockTextGeneration:

@@ -38,20 +38,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import socket
+
+def resolve_host(hostname: str, default: str) -> str:
+    try:
+        socket.gethostbyname(hostname)
+        return hostname
+    except socket.gaierror:
+        return default
+
+BACKEND_HOST = resolve_host("backend", "localhost")
+LLAMA_HOST = resolve_host("llama_service", "localhost")
+DOC_PARSER_HOST = resolve_host("doc_parser", "localhost")
+
 # Service registry
 SERVICES = {
     "backend": {
-        "url": "http://backend:8000",
+        "url": f"http://{BACKEND_HOST}:8000",
         "health_endpoint": "/health",
         "status": "unknown"
     },
     "llama_service": {
-        "url": "http://llama_service:8080",
+        "url": f"http://{LLAMA_HOST}:8080",
         "health_endpoint": "/health",
         "status": "unknown"
     },
     "doc_parser": {
-        "url": "http://doc_parser:8001",
+        "url": f"http://{DOC_PARSER_HOST}:8001",
         "health_endpoint": "/health",
         "status": "unknown"
     }
