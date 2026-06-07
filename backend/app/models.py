@@ -30,36 +30,61 @@ class MockTokenizer:
     def __init__(self):
         self.eos_token_id = 0
 
-
 class HFInferenceAPI:
     """Uses Hugging Face Serverless Inference API for generation"""
+
     def __init__(self, model_id: str, token: str):
         self.model_id = model_id
         self.token = token
+
         from huggingface_hub import InferenceClient
-        self.client = InferenceClient(model=model_id, token=token)
+
+        self.client = InferenceClient(
+            model=model_id,
+            token=token
+        )
+
         self.tokenizer = MockTokenizer()
-        
+
     def __call__(self, prompts, **kwargs):
         if isinstance(prompts, str):
             prompts = [prompts]
-        
-        # Clean up kwargs that are not supported by InferenceClient.text_generation
+
         clean_kwargs = {}
         for key in ["max_new_tokens", "temperature", "do_sample", "return_full_text"]:
             if key in kwargs:
                 clean_kwargs[key] = kwargs[key]
-                
+
         results = []
+
         for prompt in prompts:
             try:
-                text = self.client.text_generation(prompt, **clean_kwargs)
-                results.append({"generated_text": text})
+                response = self.client.chat.completions.create(
+                    model=self.model_id,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    max_tokens=clean_kwargs.get("max_new_tokens", 512),
+                    temperature=clean_kwargs.get("temperature", 0.7),
+                )
+
+                text = response.choices[0].message.content
+
+                results.append({
+                    "generated_text": text
+                })
+
             except Exception as e:
                 logger.error(f"HF Inference API error: {e}")
-                results.append({"generated_text": f"Error generating response via Hugging Face Inference API: {e}"})
-        return results
 
+                results.append({
+                    "generated_text": f"Error generating response via Hugging Face Inference API: {e}"
+                })
+
+        return results
 
 def get_text_generation_pipeline():
     """Get or create the text generation pipeline with Meta LLaMA"""
